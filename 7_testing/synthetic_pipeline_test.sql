@@ -147,3 +147,5 @@ DELETE FROM HELIOS_RAW_DB.GRID.RAW_METER_DATA WHERE _source_file = 'synthetic_te
 DELETE FROM HELIOS_RAW_DB.GRID.RAW_WEATHER_DATA WHERE _source_file = 'synthetic_test.csv';
 DELETE FROM HELIOS_RAW_DB.GRID.RAW_HOUSEHOLD_INFO WHERE _source_file = 'synthetic_test.csv';
 */
+
+

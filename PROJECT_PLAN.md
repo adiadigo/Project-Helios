@@ -370,6 +370,62 @@ Scripts should be executed in numerical folder order (1_ → 2_ → 3_ → ...) 
 
 ---
 
-*Document Version: 1.0*  
-*Last Updated: 2026-02-24*  
+## Implementation Notes & Fixes
+
+### Consumption Views - Column Name Errors (2026-02-26)
+
+During creation of 10 consumption insight views in `HELIOS_ANALYTICS_DB.PUBLIC`, three views failed due to incorrect column references against `SNOWFLAKE.ACCOUNT_USAGE` views.
+
+#### Errors Encountered
+
+| View | Error | Cause |
+|------|-------|-------|
+| `V_TOP_QUERIES_BY_COST` | `invalid identifier 'QUERY_TEXT'` | `QUERY_ATTRIBUTION_HISTORY` does not have `QUERY_TEXT` column |
+| `V_RESOURCE_MONITOR_STATUS` | `invalid identifier 'FREQUENCY'` | `RESOURCE_MONITORS` view uses different column names than `SHOW RESOURCE MONITORS` output |
+| `V_COST_ANOMALIES` | `invalid identifier 'MEASUREMENT_DATE'` | `ANOMALIES_DAILY` uses `DATE` not `MEASUREMENT_DATE` |
+
+#### Fixes Applied
+
+**V_TOP_QUERIES_BY_COST**: Removed `QUERY_TEXT`, used `QUERY_PARAMETERIZED_HASH` instead for query identification.
+
+```sql
+-- Before (failed)
+SELECT QUERY_ID, LEFT(QUERY_TEXT, 200) AS QUERY_PREVIEW, ...
+
+-- After (fixed)
+SELECT QUERY_ID, QUERY_PARAMETERIZED_HASH, ...
+```
+
+**V_RESOURCE_MONITOR_STATUS**: Used correct columns from `ACCOUNT_USAGE.RESOURCE_MONITORS` view schema.
+
+```sql
+-- Before (failed)
+SELECT NAME, FREQUENCY, START_TIME, END_TIME, ...
+
+-- After (fixed)
+SELECT NAME AS MONITOR_NAME, NOTIFY AS NOTIFY_THRESHOLD, 
+       SUSPEND AS SUSPEND_THRESHOLD, WAREHOUSES, CREATED, ...
+```
+
+**V_COST_ANOMALIES**: Used correct column names from `ANOMALIES_DAILY` schema.
+
+```sql
+-- Before (failed)
+SELECT MEASUREMENT_DATE, CREDITS_USED_COMPUTE, CREDITS_PREDICTED, COMPOSITE_SCORE, ...
+
+-- After (fixed)
+SELECT DATE AS ANOMALY_DATE, ACTUAL_VALUE, FORECASTED_VALUE, UPPER_BOUND, LOWER_BOUND, ...
+```
+
+#### Lesson Learned
+
+Always run `DESCRIBE VIEW SNOWFLAKE.ACCOUNT_USAGE.<view_name>` before referencing columns in `ACCOUNT_USAGE` views. Column names differ between:
+- `SHOW` command output
+- `ACCOUNT_USAGE` view schema
+- Documentation examples
+
+---
+
+*Document Version: 1.1*  
+*Last Updated: 2026-02-26*  
 *Project Codename: HELIOS*
