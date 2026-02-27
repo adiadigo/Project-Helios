@@ -1,6 +1,12 @@
 -- =============================================================================
 -- MASKING POLICIES - Project Helios PII Protection
 -- =============================================================================
+-- Role: ACCOUNTADMIN (required for masking policy management)
+-- Warehouse: COMPUTE_WH (admin operations)
+-- =============================================================================
+
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE COMPUTE_WH;
 
 USE DATABASE HELIOS_GOVERNANCE_DB;
 USE SCHEMA POLICIES;

@@ -1,6 +1,12 @@
 -- =============================================================================
 -- ROW ACCESS POLICY - Project Helios Row-Level Security
 -- =============================================================================
+-- Role: ACCOUNTADMIN (required for row access policy management)
+-- Warehouse: COMPUTE_WH (admin operations)
+-- =============================================================================
+
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE COMPUTE_WH;
 
 USE DATABASE HELIOS_GOVERNANCE_DB;
 USE SCHEMA POLICIES;

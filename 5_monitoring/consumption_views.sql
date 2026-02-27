@@ -1,6 +1,12 @@
 -- =============================================================================
 -- CONSUMPTION INSIGHT VIEWS - Project Helios (Trial: 200 credits/month)
 -- =============================================================================
+-- Role: ACCOUNTADMIN (required for ACCOUNT_USAGE access)
+-- Warehouse: COMPUTE_WH (monitoring queries)
+-- =============================================================================
+
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE COMPUTE_WH;
 
 USE DATABASE HELIOS_ANALYTICS_DB;
 USE SCHEMA PUBLIC;

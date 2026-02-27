@@ -1,11 +1,19 @@
--- ============================================================================
+-- =============================================================================
 -- PROJECT HELIOS: MEDALLION ARCHITECTURE (FINAL)
 -- Single "GRID" schema per database
--- ============================================================================
+-- =============================================================================
+-- Role: SYSADMIN (required for database/schema creation)
+-- Warehouse: Varies by layer (see inline comments)
+-- =============================================================================
 
--- ============================================================================
+USE ROLE SYSADMIN;
+
+-- =============================================================================
 -- LAYER 1: BRONZE (RAW) - Land data as-is, all VARCHAR
--- ============================================================================
+-- Warehouse: INGEST_WH
+-- =============================================================================
+
+USE WAREHOUSE INGEST_WH;
 
 CREATE DATABASE IF NOT EXISTS HELIOS_RAW_DB;
 CREATE SCHEMA IF NOT EXISTS HELIOS_RAW_DB.GRID;
@@ -37,9 +45,12 @@ CREATE TABLE IF NOT EXISTS HELIOS_RAW_DB.GRID.RAW_WEATHER_DATA (
     _source_file    VARCHAR
 );
 
--- ============================================================================
+-- =============================================================================
 -- LAYER 2: SILVER (TRANSFORM) - Typed, cleaned, renamed
--- ============================================================================
+-- Warehouse: TRANSFORM_WH
+-- =============================================================================
+
+USE WAREHOUSE TRANSFORM_WH;
 
 CREATE DATABASE IF NOT EXISTS HELIOS_TRANSFORM_DB;
 CREATE SCHEMA IF NOT EXISTS HELIOS_TRANSFORM_DB.GRID;
@@ -65,9 +76,12 @@ CREATE TABLE IF NOT EXISTS HELIOS_TRANSFORM_DB.GRID.CLEAN_WEATHER_DATA (
     CONSTRAINT pk_clean_weather PRIMARY KEY (weather_timestamp)
 );
 
--- ============================================================================
+-- =============================================================================
 -- LAYER 3: GOLD (ANALYTICS) - Star Schema
--- ============================================================================
+-- Warehouse: REPORTING_WH
+-- =============================================================================
+
+USE WAREHOUSE REPORTING_WH;
 
 CREATE DATABASE IF NOT EXISTS HELIOS_ANALYTICS_DB;
 CREATE SCHEMA IF NOT EXISTS HELIOS_ANALYTICS_DB.GRID;
@@ -116,9 +130,12 @@ LEFT JOIN HELIOS_ANALYTICS_DB.GRID.DIM_WEATHER w
     ON DATE_TRUNC('HOUR', f.reading_timestamp) = w.weather_timestamp
 GROUP BY 1, 2, 3;
 
--- ============================================================================
+-- =============================================================================
 -- LAYER 4: PLATINUM (AI-READY) - ML Features & Forecasts
--- ============================================================================
+-- Warehouse: CORTEX_WH
+-- =============================================================================
+
+USE WAREHOUSE CORTEX_WH;
 
 CREATE DATABASE IF NOT EXISTS HELIOS_AI_READY_DB;
 CREATE SCHEMA IF NOT EXISTS HELIOS_AI_READY_DB.GRID;

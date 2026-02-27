@@ -1,5 +1,11 @@
--- Use ACCOUNTADMIN for this
+-- =============================================================================
+-- NETWORK POLICIES - Project Helios
+-- Role: ACCOUNTADMIN (required for network policies)
+-- Warehouse: COMPUTE_WH (admin operations)
+-- =============================================================================
+
 USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE COMPUTE_WH;
 
 -- Create a database for infrastructure objects (SNOWFLAKE db is read-only)
 CREATE DATABASE IF NOT EXISTS INFRA_DB;

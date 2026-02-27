@@ -1,6 +1,11 @@
 -- =============================================================================
 -- RESOURCE MONITORS - Project Helios (Trial: 200 credits/month)
 -- =============================================================================
+-- Role: ACCOUNTADMIN (required for resource monitor management)
+-- Warehouse: N/A (resource monitors are account-level objects)
+-- =============================================================================
+
+USE ROLE ACCOUNTADMIN;
 
 -- Account-level safety net
 CREATE OR REPLACE RESOURCE MONITOR HELIOS_ACCOUNT_MONITOR

@@ -1,11 +1,19 @@
--- ============================================================================
+-- =============================================================================
 -- PROJECT HELIOS: SYNTHETIC DATA PIPELINE TEST
 -- Inserts 50 rows of test data and validates end-to-end flow
--- ============================================================================
+-- =============================================================================
+-- Role: HELIOS_DATA_STEWARD (full access for testing all layers)
+-- Warehouse: TRANSFORM_WH (primary transformation warehouse)
+-- =============================================================================
 
--- ============================================================================
--- STEP 1: INSERT SYNTHETIC DATA INTO RAW TABLES
--- ============================================================================
+USE ROLE HELIOS_DATA_STEWARD;
+USE WAREHOUSE TRANSFORM_WH;
+
+-- =============================================================================
+-- STEP 1: INSERT SYNTHETIC DATA INTO RAW TABLES (Use INGEST_WH)
+-- =============================================================================
+
+USE WAREHOUSE INGEST_WH;
 
 -- RAW_HOUSEHOLD_INFO (10 households)
 INSERT INTO HELIOS_RAW_DB.GRID.RAW_HOUSEHOLD_INFO (LCLid, stdorToU, Acorn, Acorn_grouped, file, _source_file)

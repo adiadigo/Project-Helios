@@ -1,6 +1,12 @@
 -- =============================================================================
 -- TAGS - Project Helios Data Classification
 -- =============================================================================
+-- Role: ACCOUNTADMIN (required for tag management)
+-- Warehouse: COMPUTE_WH (admin operations)
+-- =============================================================================
+
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE COMPUTE_WH;
 
 USE DATABASE HELIOS_GOVERNANCE_DB;
 USE SCHEMA POLICIES;

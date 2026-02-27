@@ -1,6 +1,12 @@
 -- =============================================================================
--- DATABASE CONTEXT
+-- SYSTEM ALERTS - Project Helios
 -- =============================================================================
+-- Role: ACCOUNTADMIN (required for alert and notification management)
+-- Warehouse: TRANSFORM_WH (alert execution warehouse)
+-- =============================================================================
+
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE TRANSFORM_WH;
 
 USE DATABASE HELIOS_ANALYTICS_DB;
 USE SCHEMA PUBLIC;

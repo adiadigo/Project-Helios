@@ -1,3 +1,11 @@
+-- =============================================================================
+-- WAREHOUSES - Project Helios
+-- Role: SYSADMIN (required for warehouse creation)
+-- Warehouse: N/A (creating warehouses)
+-- =============================================================================
+
+USE ROLE SYSADMIN;
+
 -- Warehouse for data ingestion workloads
 CREATE WAREHOUSE IF NOT EXISTS INGEST_WH
   WAREHOUSE_SIZE = 'XSMALL'

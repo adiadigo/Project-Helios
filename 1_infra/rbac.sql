@@ -1,4 +1,11 @@
+-- =============================================================================
+-- RBAC SETUP - Project Helios
+-- Role: SECURITYADMIN (required for role management)
+-- Warehouse: COMPUTE_WH (admin operations)
+-- =============================================================================
+
 USE ROLE SECURITYADMIN;
+USE WAREHOUSE COMPUTE_WH;
 
 -- Create custom roles
 CREATE ROLE IF NOT EXISTS HELIOS_BI_CONSUMER;

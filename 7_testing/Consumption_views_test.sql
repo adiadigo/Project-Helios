@@ -2,6 +2,12 @@
 -- CONSUMPTION VIEWS TEST - Project Helios
 -- Run each query SEPARATELY (not as a batch) for faster execution
 -- =============================================================================
+-- Role: ACCOUNTADMIN (required for ACCOUNT_USAGE views access)
+-- Warehouse: COMPUTE_WH (lightweight test queries)
+-- =============================================================================
+
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE COMPUTE_WH;
 
 -- 1. Budget Tracker (most important - single row, fast)
 SELECT * FROM HELIOS_ANALYTICS_DB.PUBLIC.V_MTD_BUDGET_TRACKER;
