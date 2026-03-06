@@ -1,0 +1,6 @@
+name: helios_dashboard
+channels:
+  - snowflake
+dependencies:
+  - plotly
+  - pandas

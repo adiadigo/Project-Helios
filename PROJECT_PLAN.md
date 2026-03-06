@@ -1,431 +1,586 @@
-# Project Helios: Smart Grid Telemetry & Forecasting Platform
+# Project Helios: Technical Documentation
 
-## Executive Summary
+## Overview
 
-**Project Helios** is an enterprise-grade Smart Grid Telemetry and Forecasting Platform built on Snowflake for the Energy sector. The platform ingests, transforms, and analyzes high-velocity IoT data from the London Smart Meter dataset to enable real-time energy consumption monitoring, demand forecasting, and operational intelligence.
+Project Helios is a Smart Grid Analytics Platform built on Snowflake, implementing enterprise data governance, role-based access control, and cost management for energy consumption data. This document describes the current implementation state and technical specifications.
+
+**Scope**: This documentation covers implemented components only. External integrations (S3, Snowpipe) and AI/ML features are excluded.
+
+---
+
+## Business Context
 
 ### Problem Statement
 
-Energy utilities face critical challenges in managing smart grid infrastructure:
-- **Data Volume**: Millions of half-hourly meter readings require scalable ingestion pipelines
-- **Data Latency**: Real-time visibility into consumption patterns is essential for grid stability
-- **Forecasting Accuracy**: Accurate demand prediction prevents outages and optimizes generation
-- **Regulatory Compliance**: PII protection and audit trails are mandatory for energy data
-- **Cost Control**: Unmanaged compute costs can spiral with continuous streaming workloads
+Energy utilities managing smart meter data face challenges in data governance, access control, and cost management. Specifically:
 
-### Solution
+- Household identifiers and demographic classifications constitute PII requiring protection
+- Different user roles require different levels of data visibility
+- Uncontrolled compute costs can exceed budgets without proper monitoring
+- Audit requirements mandate tracking of data access and policy enforcement
 
-Project Helios delivers a complete data platform leveraging Snowflake's native capabilities:
-- **Snowpipe** for continuous, event-driven ingestion from AWS S3
-- **Medallion Architecture** (Bronze → Silver → Gold → Platinum) for data quality progression
-- **Cortex ML** for native time-series forecasting without external tooling
-- **Cortex Analyst** for natural language querying via semantic models
-- **Dynamic Data Masking & Row Access Policies** for governance at scale
-- **Resource Monitors & Alerts** for FinOps cost control
+### Solution Summary
+
+Project Helios implements a governed data platform with:
+
+- Four-layer medallion architecture for data quality progression
+- Role-based access control with three consumer tiers
+- Column-level masking for PII protection
+- Row-level security for time-based data filtering
+- Resource monitors and consumption views for cost control
 
 ---
 
-## Architecture
+## Technical Architecture
 
-### Data Flow Diagram
+### Database Architecture
+
+The platform implements a medallion architecture across four databases:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              EXTERNAL SOURCES                                    │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│   ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐          │
-│   │  Smart Meters    │    │  Household Info  │    │  Weather API     │          │
-│   │  (IoT Devices)   │    │  (CSV Upload)    │    │  (Dark Sky)      │          │
-│   └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘          │
-│            │                       │                       │                     │
-│            ▼                       ▼                       ▼                     │
-│   ┌─────────────────────────────────────────────────────────────────┐           │
-│   │                    AWS S3 BUCKET                                 │           │
-│   │              s3://helios-smart-grid-telemetry                    │           │
-│   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │           │
-│   │  │ /readings/  │  │ /households/│  │ /weather/   │              │           │
-│   │  │ block_*.csv │  │ info.csv    │  │ hourly.csv  │              │           │
-│   │  └─────────────┘  └─────────────┘  └─────────────┘              │           │
-│   └─────────────────────────────┬───────────────────────────────────┘           │
-│                                 │                                                │
-│                                 │ SQS Event Notification                         │
-│                                 ▼                                                │
-└─────────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              SNOWFLAKE PLATFORM                                  │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │                         INGESTION LAYER                                    │  │
-│  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                    │  │
-│  │  │ STORAGE     │    │ SNOWPIPE    │    │ INGEST_WH   │                    │  │
-│  │  │ INTEGRATION │───▶│ (Auto-Load) │───▶│ (X-Small)   │                    │  │
-│  │  └─────────────┘    └─────────────┘    └─────────────┘                    │  │
-│  └───────────────────────────────────────────────────────────────────────────┘  │
-│                                      │                                           │
-│                                      ▼                                           │
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │                    MEDALLION DATA ARCHITECTURE                             │  │
-│  │                                                                            │  │
-│  │  ┌────────────────┐   ┌────────────────┐   ┌────────────────┐             │  │
-│  │  │   BRONZE       │   │    SILVER      │   │     GOLD       │             │  │
-│  │  │ HELIOS_RAW_DB  │──▶│HELIOS_TRANSFORM│──▶│HELIOS_ANALYTICS│             │  │
-│  │  │                │   │      _DB       │   │      _DB       │             │  │
-│  │  │ • RAW_READINGS │   │ • CLEAN_       │   │ • FACT_ENERGY_ │             │  │
-│  │  │ • RAW_HOUSEHOLD│   │   READINGS     │   │   CONSUMPTION  │             │  │
-│  │  │ • RAW_WEATHER  │   │ • CLEAN_       │   │ • DIM_HOUSEHOLD│             │  │
-│  │  │                │   │   HOUSEHOLD    │   │ • DIM_WEATHER  │             │  │
-│  │  │ (VARIANT/STR)  │   │ • CLEAN_WEATHER│   │ • DIM_DATE     │             │  │
-│  │  │                │   │                │   │                │             │  │
-│  │  │                │   │ (Typed Columns)│   │ (Star Schema)  │             │  │
-│  │  └────────────────┘   └────────────────┘   └────────────────┘             │  │
-│  │         │                     │                    │                       │  │
-│  │         │    TRANSFORM_WH     │    TRANSFORM_WH    │    REPORTING_WH       │  │
-│  │         ▼                     ▼                    ▼                       │  │
-│  │  ┌─────────────────────────────────────────────────────────────────────┐  │  │
-│  │  │                        PLATINUM LAYER                                │  │  │
-│  │  │                      HELIOS_AI_READY_DB                              │  │  │
-│  │  │  ┌─────────────────────┐    ┌─────────────────────┐                  │  │  │
-│  │  │  │   ML FORECASTS      │    │   SEMANTIC MODEL    │                  │  │  │
-│  │  │  │ • FORECAST_RESULTS  │    │ • energy_model.yaml │                  │  │  │
-│  │  │  │ • ANOMALY_SCORES    │    │ (Cortex Analyst)    │                  │  │  │
-│  │  │  │ (Cortex ML)         │    │                     │                  │  │  │
-│  │  │  └─────────────────────┘    └─────────────────────┘                  │  │  │
-│  │  │              │                         │                              │  │  │
-│  │  │              │      CORTEX_WH          │                              │  │  │
-│  │  └─────────────────────────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                  │
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │                      SECURITY & GOVERNANCE                                 │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │  │
-│  │  │Network Policy│  │Dynamic Masking│ │Row Access    │  │Object Tags   │   │  │
-│  │  │(IP Allowlist)│  │(PII Fields)  │  │Policy (Region)│ │(PII, SENS)   │   │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │  │
-│  └───────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                  │
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │                         FINOPS & MONITORING                                │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │  │
-│  │  │Resource      │  │Account Usage │  │Email Alerts  │  │Audit Views   │   │  │
-│  │  │Monitors      │  │Dashboards    │  │(Cost/Failure)│  │(Login/Query) │   │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │  │
-│  └───────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              RBAC HIERARCHY                                      │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│                            ACCOUNTADMIN                                          │
-│                                  │                                               │
-│                    ┌─────────────┴─────────────┐                                │
-│                    ▼                           ▼                                │
-│               SYSADMIN                   SECURITYADMIN                          │
-│                    │                           │                                │
-│                    ▼                           ▼                                │
-│           HELIOS_SYSADMIN            HELIOS_SECURITYADMIN                       │
-│                    │                                                            │
-│                    ▼                                                            │
-│           HELIOS_DATA_ENGINEER                                                  │
-│                    │                                                            │
-│                    ▼                                                            │
-│           HELIOS_DATA_ANALYST                                                   │
-│                    │                                                            │
-│                    ▼                                                            │
-│           HELIOS_BI_CONSUMER                                                    │
-│                                                                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
+HELIOS_RAW_DB          HELIOS_TRANSFORM_DB       HELIOS_ANALYTICS_DB      HELIOS_AI_READY_DB
+(Bronze Layer)         (Silver Layer)            (Gold Layer)             (Platinum Layer)
+     |                      |                         |                        |
+     v                      v                         v                        v
+RAW_METER_DATA    ->   CLEAN_METER_DATA    ->   FACT_ENERGY_         ->  V_TRAINING_
+RAW_HOUSEHOLD_INFO     CLEAN_HOUSEHOLD_INFO     CONSUMPTION              FEATURES
+RAW_WEATHER_DATA       CLEAN_WEATHER_DATA       DIM_HOUSEHOLD            CORTEX_LOAD_
+                                                DIM_WEATHER              FORECAST
+                                                V_DASHBOARD_FEED
 ```
 
-### Compute Resources
+#### Layer Specifications
 
-| Warehouse | Size | Purpose | Primary Role |
-|-----------|------|---------|--------------|
-| INGEST_WH | X-Small | Snowpipe loading, COPY INTO | HELIOS_DATA_ENGINEER |
-| TRANSFORM_WH | Small | ELT transformations, Tasks | HELIOS_DATA_ENGINEER |
-| REPORTING_WH | X-Small | BI queries, dashboards | HELIOS_DATA_ANALYST |
-| CORTEX_WH | Small | ML training, inference | HELIOS_DATA_ENGINEER |
+| Layer | Database | Purpose | Data Characteristics |
+|-------|----------|---------|---------------------|
+| Bronze | HELIOS_RAW_DB | Raw data landing | VARCHAR columns, no validation |
+| Silver | HELIOS_TRANSFORM_DB | Cleaned and typed | Proper data types, constraints |
+| Gold | HELIOS_ANALYTICS_DB | Star schema | Fact/dimension model, aggregations |
+| Platinum | HELIOS_AI_READY_DB | ML-ready features | Derived features, forecast outputs |
 
----
+#### Schema Design
 
-## 15-Phase Execution Checklist
+All data tables reside in the `GRID` schema within each database. This single-schema approach simplifies access control and reduces grant management overhead.
 
-### Phase 1: Network Security
-- [ ] Create INFRA_DB database for infrastructure objects
-- [ ] Create Network Rule for allowed IP ranges
-- [ ] Create Network Policy referencing the rule
-- [ ] Apply Network Policy to account/users
+```sql
+-- Example: Gold layer fact table
+HELIOS_ANALYTICS_DB.GRID.FACT_ENERGY_CONSUMPTION
+    household_id        VARCHAR NOT NULL    -- PK, FK to DIM_HOUSEHOLD
+    reading_timestamp   TIMESTAMP_NTZ NOT NULL  -- PK
+    energy_kwh          FLOAT NOT NULL
+```
 
-### Phase 2: Role-Based Access Control (RBAC)
-- [ ] Create HELIOS_SYSADMIN role
-- [ ] Create HELIOS_SECURITYADMIN role
-- [ ] Create HELIOS_DATA_ENGINEER role
-- [ ] Create HELIOS_DATA_ANALYST role
-- [ ] Create HELIOS_BI_CONSUMER role
-- [ ] Establish role hierarchy with GRANT ROLE statements
-- [ ] Connect custom roles to system roles
+### Compute Architecture
 
-### Phase 3: Compute Warehouses
-- [ ] Create INGEST_WH (X-Small, auto-suspend 60s)
-- [ ] Create TRANSFORM_WH (Small, auto-suspend 60s)
-- [ ] Create REPORTING_WH (X-Small, auto-suspend 60s)
-- [ ] Create CORTEX_WH (Small, auto-suspend 60s)
-- [ ] Grant USAGE privileges to appropriate roles
+Four purpose-specific warehouses provide workload isolation:
 
-### Phase 4: Medallion Databases & Schemas
-- [ ] Create HELIOS_RAW_DB (Bronze layer)
-- [ ] Create HELIOS_TRANSFORM_DB (Silver layer)
-- [ ] Create HELIOS_ANALYTICS_DB (Gold layer)
-- [ ] Create HELIOS_AI_READY_DB (Platinum layer)
-- [ ] Create schemas within each database
-- [ ] Grant database/schema privileges to roles
+| Warehouse | Size | Auto-Suspend | Purpose |
+|-----------|------|--------------|---------|
+| INGEST_WH | X-Small | 60 seconds | Data loading operations |
+| TRANSFORM_WH | Small | 60 seconds | ELT transformations |
+| REPORTING_WH | X-Small | 60 seconds | BI and analytics queries |
+| CORTEX_WH | Small | 60 seconds | ML workloads |
 
-### Phase 5: External Storage Integration
-- [ ] Create Storage Integration for AWS S3
-- [ ] Create External Stages for each data source
-- [ ] Test stage connectivity with LIST commands
-- [ ] Grant USAGE on stages to HELIOS_DATA_ENGINEER
-
-### Phase 6: Raw Layer Tables & Snowpipe
-- [ ] Create RAW_READINGS table (VARIANT or raw strings)
-- [ ] Create RAW_HOUSEHOLDS table
-- [ ] Create RAW_WEATHER table
-- [ ] Create Snowpipe for readings ingestion
-- [ ] Create Snowpipe for households ingestion
-- [ ] Create Snowpipe for weather ingestion
-- [ ] Configure SQS notifications (external)
-
-### Phase 7: Data Governance - Tagging
-- [ ] Create tag HELIOS_PII for personally identifiable information
-- [ ] Create tag HELIOS_SENSITIVE for business-sensitive data
-- [ ] Create tag HELIOS_COST_CENTER for chargeback
-- [ ] Apply tags to relevant columns and objects
-
-### Phase 8: Data Governance - Masking & Row Access
-- [ ] Create Dynamic Data Masking policy for LCLid
-- [ ] Create Dynamic Data Masking policy for Tariff
-- [ ] Create Dynamic Data Masking policy for ACORN Group
-- [ ] Create Row Access Policy for regional data restriction
-- [ ] Apply masking policies to relevant columns
-- [ ] Apply row access policy to fact tables
-
-### Phase 9: FinOps - Resource Monitors
-- [ ] Create Account-level Resource Monitor (hard limit)
-- [ ] Create INGEST_WH Resource Monitor
-- [ ] Create TRANSFORM_WH Resource Monitor
-- [ ] Create REPORTING_WH Resource Monitor
-- [ ] Create CORTEX_WH Resource Monitor
-- [ ] Set appropriate credit thresholds and actions
-
-### Phase 10: FinOps - Monitoring Views
-- [ ] Create view: Daily Credit Consumption by Warehouse
-- [ ] Create view: Weekly Credit Trend Analysis
-- [ ] Create view: Query Performance by User
-- [ ] Create view: Warehouse Queue Time Analysis
-- [ ] Create view: Storage Consumption by Database
-- [ ] Create view: Top 10 Expensive Queries
-- [ ] Create view: Failed Query Analysis
-- [ ] Create view: User Activity Summary
-- [ ] Create view: Role Usage Statistics
-- [ ] Create view: Data Transfer Metrics
-
-### Phase 11: FinOps - Alerts
-- [ ] Create alert: Daily Credit Threshold Exceeded
-- [ ] Create alert: Warehouse Queue Time High
-- [ ] Create alert: Query Failure Rate Spike
-- [ ] Create alert: Unusual Login Activity
-- [ ] Create alert: Large Data Transfer Detected
-- [ ] Create alert: Storage Growth Anomaly
-- [ ] Create alert: Long-Running Query Detected
-- [ ] Create alert: Resource Monitor Warning
-- [ ] Create alert: Failed Authentication Attempts
-- [ ] Create alert: Schema Change Detected
-
-### Phase 12: Transform Layer (Silver)
-- [ ] Create CLEAN_READINGS table with typed columns
-- [ ] Create CLEAN_HOUSEHOLDS table with typed columns
-- [ ] Create CLEAN_WEATHER table with typed columns
-- [ ] Create Stream on RAW_READINGS for CDC
-- [ ] Create Task for continuous RAW → CLEAN transformation
-- [ ] Implement data quality checks in transformation
-
-### Phase 13: Analytics Layer (Gold)
-- [ ] Create DIM_DATE dimension table
-- [ ] Create DIM_HOUSEHOLD dimension table
-- [ ] Create DIM_WEATHER dimension table
-- [ ] Create FACT_ENERGY_CONSUMPTION fact table
-- [ ] Create Stream on CLEAN tables for CDC
-- [ ] Create Task for Silver → Gold transformation
-- [ ] Create aggregation views for reporting
-
-### Phase 14: Verification & Testing
-- [ ] Create row count validation: RAW vs CLEAN
-- [ ] Create row count validation: CLEAN vs ANALYTICS
-- [ ] Create data quality check: NULL value percentages
-- [ ] Create data quality check: Value range validation
-- [ ] Create referential integrity check: FK validation
-- [ ] Create freshness check: Latest timestamp validation
-
-### Phase 15: AI & ML Layer (Platinum)
-- [ ] Create FORECAST_RESULTS table for ML output
-- [ ] Create ANOMALY_SCORES table for anomaly detection
-- [ ] Train Cortex ML FORECAST model on consumption data
-- [ ] Create scheduled Task for forecast refresh
-- [ ] Create Semantic Model YAML for Cortex Analyst
-- [ ] Deploy Semantic Model to stage
-- [ ] Test Cortex Analyst natural language queries
+Warehouse sizing rationale:
+- INGEST_WH and REPORTING_WH use X-Small as workloads are I/O-bound rather than compute-bound
+- TRANSFORM_WH uses Small for complex JOIN operations during Silver-to-Gold transformations
+- CORTEX_WH uses Small to accommodate ML model training requirements
 
 ---
 
-## Repository Structure
+## Role-Based Access Control (RBAC)
+
+### Role Hierarchy
+
+The implementation follows Snowflake's recommended pattern of custom functional roles connected to system roles:
+
+```
+ACCOUNTADMIN
+    |
+    +-- SYSADMIN
+    |       |
+    |       +-- HELIOS_SYSADMIN
+    |               |
+    |               +-- HELIOS_DATA_ENGINEER
+    |                       |
+    |                       +-- HELIOS_DATA_ANALYST
+    |                               |
+    |                               +-- HELIOS_BI_CONSUMER
+    |
+    +-- SECURITYADMIN
+            |
+            +-- HELIOS_SECURITYADMIN
+```
+
+Additionally, two governance-specific roles exist outside this hierarchy:
+
+- `HELIOS_DATA_STEWARD`: Full data access for governance and quality management
+- `HELIOS_ANALYST`: Intermediate access with partial masking
+
+### Role Definitions
+
+| Role | Purpose | Database Access | Warehouse Access |
+|------|---------|-----------------|------------------|
+| HELIOS_DATA_STEWARD | Data governance, quality management | All databases, unmasked | TRANSFORM_WH |
+| HELIOS_ANALYST | Advanced analytics, data science | HELIOS_ANALYTICS_DB, partial masking | TRANSFORM_WH |
+| HELIOS_BI_CONSUMER | Dashboard consumption, reporting | HELIOS_ANALYTICS_DB, full masking | REPORTING_WH |
+| HELIOS_DATA_ENGINEER | Pipeline development | All databases | All warehouses |
+| HELIOS_DATA_ANALYST | Ad-hoc analysis | HELIOS_ANALYTICS_DB | REPORTING_WH |
+
+### Grant Structure
+
+Database and schema grants follow a consistent pattern:
+
+```sql
+-- Pattern for consumer roles
+GRANT USAGE ON DATABASE <db> TO ROLE <role>;
+GRANT USAGE ON SCHEMA <db>.<schema> TO ROLE <role>;
+GRANT SELECT ON ALL TABLES IN SCHEMA <db>.<schema> TO ROLE <role>;
+```
+
+Warehouse grants are role-specific to enforce workload isolation:
+
+```sql
+GRANT USAGE ON WAREHOUSE REPORTING_WH TO ROLE HELIOS_BI_CONSUMER;
+GRANT USAGE ON WAREHOUSE TRANSFORM_WH TO ROLE HELIOS_ANALYST;
+```
+
+### Test Users
+
+Two isolated test users validate masking behavior without ACCOUNTADMIN inheritance:
+
+| User | Default Role | Default Warehouse | Purpose |
+|------|--------------|-------------------|---------|
+| HELIOS_TEST_BI_USER | HELIOS_BI_CONSUMER | REPORTING_WH | Verify full masking |
+| HELIOS_TEST_ANALYST_USER | HELIOS_ANALYST | TRANSFORM_WH | Verify partial masking |
+
+---
+
+## Data Governance
+
+### Tagging Framework
+
+Three object tags classify data across the platform:
+
+#### PII_LEVEL Tag
+
+Classifies personally identifiable information sensitivity:
+
+| Value | Definition | Example Columns |
+|-------|------------|-----------------|
+| HIGH | Direct identifier, can be linked to individual | household_id |
+| MEDIUM | Indirect identifier, demographic classification | acorn_group |
+| LOW | Business data with minimal privacy impact | tariff_type |
+| NONE | Non-sensitive operational data | energy_kwh, temperature |
+
+#### DATA_DOMAIN Tag
+
+Classifies data by business domain:
+
+| Value | Description |
+|-------|-------------|
+| HOUSEHOLD | Customer and meter information |
+| ENERGY | Consumption readings and metrics |
+| WEATHER | Environmental conditions |
+| FINANCIAL | Billing and tariff data |
+
+#### RETENTION_POLICY Tag
+
+Applied at database level to define data lifecycle:
+
+| Value | Retention Period | Applied To |
+|-------|------------------|------------|
+| 90_DAYS | 3 months | HELIOS_RAW_DB |
+| 1_YEAR | 12 months | HELIOS_TRANSFORM_DB |
+| 7_YEARS | 84 months | HELIOS_ANALYTICS_DB |
+| PERMANENT | Indefinite | HELIOS_AI_READY_DB |
+
+#### Tag Application
+
+Tags are applied at column level for PII classification:
+
+```sql
+ALTER TABLE HELIOS_ANALYTICS_DB.GRID.DIM_HOUSEHOLD MODIFY COLUMN
+    household_id SET TAG HELIOS_GOVERNANCE_DB.POLICIES.PII_LEVEL = 'HIGH';
+```
+
+Tags are applied at database level for retention:
+
+```sql
+ALTER DATABASE HELIOS_RAW_DB SET TAG
+    HELIOS_GOVERNANCE_DB.POLICIES.RETENTION_POLICY = '90_DAYS';
+```
+
+### Dynamic Data Masking
+
+Three masking policies protect sensitive columns based on session role:
+
+#### MASK_HOUSEHOLD_ID
+
+Protects household identifier (HIGH PII):
+
+| Role | Output | Example |
+|------|--------|---------|
+| HELIOS_DATA_STEWARD | Full value | MAC000123 |
+| ACCOUNTADMIN | Full value | MAC000123 |
+| HELIOS_ANALYST | Partial mask (last 4 characters) | XXX0123 |
+| All other roles | Full mask | ***MASKED*** |
+
+Implementation:
+
+```sql
+CREATE OR REPLACE MASKING POLICY MASK_HOUSEHOLD_ID
+AS (val STRING) RETURNS STRING ->
+  CASE
+    WHEN IS_ROLE_IN_SESSION('HELIOS_DATA_STEWARD') THEN val
+    WHEN IS_ROLE_IN_SESSION('ACCOUNTADMIN') THEN val
+    WHEN IS_ROLE_IN_SESSION('HELIOS_ANALYST') THEN 'XXX' || RIGHT(val, 4)
+    ELSE '***MASKED***'
+  END;
+```
+
+#### MASK_ACORN_GROUP
+
+Protects demographic classification (MEDIUM PII):
+
+| Role | Output | Rationale |
+|------|--------|-----------|
+| HELIOS_DATA_STEWARD | Full value | Governance requires visibility |
+| ACCOUNTADMIN | Full value | Administrative access |
+| HELIOS_ANALYST | SHA256 hash | Enables grouping without revealing category |
+| All other roles | Full mask | No demographic visibility |
+
+The hash-based approach for analysts preserves analytical utility. Analysts can perform `GROUP BY acorn_group` operations and observe trends without knowing which hash corresponds to which demographic category.
+
+#### MASK_TARIFF
+
+Protects tariff type (LOW PII) with generalization:
+
+| Role | Output | Example |
+|------|--------|---------|
+| HELIOS_DATA_STEWARD | Full value | Standard |
+| HELIOS_ANALYST | Full value | Standard |
+| HELIOS_BI_CONSUMER | Generalized category | STANDARD_TARIFF |
+| All other roles | Full mask | ***MASKED*** |
+
+Generalization mapping:
+- Standard, Std -> STANDARD_TARIFF
+- Time-of-Use, ToU -> VARIABLE_TARIFF
+- All others -> OTHER_TARIFF
+
+#### Policy Application
+
+Masking policies are applied to columns across multiple tables:
+
+| Table | Columns with Masking |
+|-------|---------------------|
+| HELIOS_ANALYTICS_DB.GRID.DIM_HOUSEHOLD | household_id, acorn_group, tariff_type |
+| HELIOS_ANALYTICS_DB.GRID.FACT_ENERGY_CONSUMPTION | household_id |
+| HELIOS_TRANSFORM_DB.GRID.CLEAN_HOUSEHOLD_INFO | household_id, acorn_group, tariff_type |
+
+### Row Access Policy
+
+A row access policy restricts data visibility based on time:
+
+```sql
+CREATE OR REPLACE ROW ACCESS POLICY RAP_ENERGY_DATA
+AS (reading_timestamp TIMESTAMP_NTZ) RETURNS BOOLEAN ->
+  CASE
+    WHEN IS_ROLE_IN_SESSION('HELIOS_DATA_STEWARD') THEN TRUE
+    WHEN IS_ROLE_IN_SESSION('ACCOUNTADMIN') THEN TRUE
+    WHEN IS_ROLE_IN_SESSION('HELIOS_ANALYST') THEN TRUE
+    WHEN IS_ROLE_IN_SESSION('HELIOS_BI_CONSUMER') THEN 
+      reading_timestamp >= DATEADD(MONTH, -12, CURRENT_DATE())
+    ELSE FALSE
+  END;
+```
+
+Access matrix:
+
+| Role | Data Access |
+|------|-------------|
+| HELIOS_DATA_STEWARD | All historical data |
+| HELIOS_ANALYST | All historical data |
+| HELIOS_BI_CONSUMER | Last 12 months only |
+| Other roles | No access |
+
+#### Technical Constraint
+
+Snowflake does not permit a column to have both a masking policy and serve as a row access policy argument. For this reason, the RAP uses `reading_timestamp` rather than `household_id`. This constraint influenced the policy design to use time-based rather than entity-based filtering.
+
+### Governance Database
+
+All governance objects reside in a dedicated database:
+
+```
+HELIOS_GOVERNANCE_DB.POLICIES
+    |
+    +-- Tags
+    |   +-- PII_LEVEL
+    |   +-- DATA_DOMAIN
+    |   +-- RETENTION_POLICY
+    |
+    +-- Masking Policies
+    |   +-- MASK_HOUSEHOLD_ID
+    |   +-- MASK_ACORN_GROUP
+    |   +-- MASK_TARIFF
+    |
+    +-- Row Access Policies
+    |   +-- RAP_ENERGY_DATA
+    |
+    +-- Mapping Tables
+    |   +-- ROLE_ACORN_MAPPING
+    |   +-- ROLE_HOUSEHOLD_MAPPING
+    |
+    +-- Validation Views
+        +-- V_MASKING_VALIDATION
+```
+
+### Policy Validation
+
+The `V_MASKING_VALIDATION` view simulates masking output for each role without requiring role switching:
+
+```sql
+SELECT * FROM HELIOS_GOVERNANCE_DB.POLICIES.V_MASKING_VALIDATION;
+```
+
+This view replicates the masking policy logic to show expected output per role, enabling validation without creating test sessions.
+
+---
+
+## Resource Monitoring and Cost Control
+
+### Resource Monitor Configuration
+
+Five resource monitors enforce credit limits:
+
+#### Account-Level Monitor
+
+```sql
+CREATE OR REPLACE RESOURCE MONITOR HELIOS_ACCOUNT_MONITOR
+  WITH CREDIT_QUOTA = 200
+  FREQUENCY = MONTHLY
+  START_TIMESTAMP = IMMEDIATELY
+  TRIGGERS
+    ON 75 PERCENT DO NOTIFY
+    ON 90 PERCENT DO NOTIFY
+    ON 100 PERCENT DO SUSPEND;
+```
+
+This monitor serves as the hard limit for the entire account.
+
+#### Per-Warehouse Monitors
+
+| Monitor | Warehouse | Quota | 70% Action | 90% Action |
+|---------|-----------|-------|------------|------------|
+| INGEST_WH_MONITOR | INGEST_WH | 30 | Notify | Suspend |
+| TRANSFORM_WH_MONITOR | TRANSFORM_WH | 50 | Notify | Suspend |
+| REPORTING_WH_MONITOR | REPORTING_WH | 30 | Notify | Suspend |
+| CORTEX_WH_MONITOR | CORTEX_WH | 60 | Notify | Suspend |
+
+Total warehouse allocation (170 credits) remains below account limit (200 credits) to provide buffer for cloud services consumption.
+
+### Consumption Views
+
+Ten views in `HELIOS_ANALYTICS_DB.PUBLIC` provide consumption insights:
+
+| View | Purpose | Data Source |
+|------|---------|-------------|
+| V_DAILY_CREDIT_SUMMARY | Daily credit totals | METERING_HISTORY |
+| V_WAREHOUSE_DAILY_USAGE | Per-warehouse daily breakdown | WAREHOUSE_METERING_HISTORY |
+| V_WAREHOUSE_HOURLY_PATTERN | Peak usage hour identification | WAREHOUSE_METERING_HISTORY |
+| V_TOP_QUERIES_BY_COST | Most expensive queries (7 days) | QUERY_ATTRIBUTION_HISTORY |
+| V_USER_CONSUMPTION | Credit usage by user | QUERY_ATTRIBUTION_HISTORY |
+| V_DATABASE_STORAGE | Storage by Helios database | DATABASE_STORAGE_USAGE_HISTORY |
+| V_CORTEX_AI_USAGE | Cortex function costs | CORTEX_FUNCTIONS_USAGE_HISTORY |
+| V_RESOURCE_MONITOR_STATUS | Monitor quotas vs usage | RESOURCE_MONITORS |
+| V_COST_ANOMALIES | ML-detected spending anomalies | ANOMALIES_DAILY |
+| V_MTD_BUDGET_TRACKER | Month-to-date budget status | METERING_HISTORY |
+
+#### V_MTD_BUDGET_TRACKER
+
+Provides budget status with projection:
+
+```sql
+SELECT 
+    MONTHLY_BUDGET,        -- 200
+    MTD_CREDITS,           -- Credits used this month
+    REMAINING_CREDITS,     -- Budget remaining
+    PCT_CONSUMED,          -- Percentage consumed
+    DAILY_BURN_RATE,       -- Average daily consumption
+    DAYS_REMAINING,        -- Days left in month
+    PROJECTED_MONTHLY,     -- Projected end-of-month total
+    BUDGET_STATUS          -- ON TRACK | AT RISK | OVER BUDGET
+FROM HELIOS_ANALYTICS_DB.PUBLIC.V_MTD_BUDGET_TRACKER;
+```
+
+### System Alerts
+
+Three alerts monitor system health:
+
+| Alert | Schedule | Condition | Action |
+|-------|----------|-----------|--------|
+| HELIOS_LONG_QUERY_ALERT | 15 minutes | Query > 5 minutes | Email notification |
+| HELIOS_QUERY_FAILURE_ALERT | 60 minutes | Failure rate > 5% | Email notification |
+| HELIOS_QUEUE_TIME_ALERT | 15 minutes | Avg queue > 30 seconds | Email notification |
+
+Alerts execute on TRANSFORM_WH and send notifications via the `helios_alerts` notification integration.
+
+---
+
+## File Structure
 
 ```
 project-helios/
-│
-├── PROJECT_PLAN.md                    # This file - Master documentation
-├── README.md                          # Quick start guide (auto-generated)
-│
-├── 1_infra/                           # Phase 1-3: Infrastructure & Security
-│   ├── warehouses.sql                 # Warehouse creation + grants
-│   ├── netpolicies.sql                # Network rules and policies
-│   └── rbac.sql                       # Roles and hierarchy
-│
-├── 2_storage/                         # Phase 4-6: Storage & Ingestion
-│   ├── databases.sql                  # Medallion databases and schemas
-│   ├── storage_integration.sql        # AWS S3 storage integration
-│   ├── stages.sql                     # External stages for each source
-│   ├── raw_tables.sql                 # Bronze layer table definitions
-│   └── snowpipes.sql                  # Snowpipe definitions for auto-ingest
-│
-├── 3_governance/                      # Phase 7-8: Data Governance
-│   ├── tags.sql                       # Object and column tags
-│   ├── masking_policies.sql           # Dynamic data masking policies
-│   └── row_access_policies.sql        # Row-level security policies
-│
-├── 4_finops/                          # Phase 9-11: FinOps & Monitoring
-│   ├── resource_monitors.sql          # Account and warehouse monitors
-│   ├── monitoring_views.sql           # ACCOUNT_USAGE analytical views
-│   ├── alerts.sql                     # SYSTEM$SEND_EMAIL alert definitions
-│   └── audit_views.sql                # Login and query history views
-│
-├── 5_transformation/                  # Phase 12-13: ELT Pipeline
-│   ├── silver_tables.sql              # Clean/typed table definitions
-│   ├── gold_tables.sql                # Star schema tables (facts + dims)
-│   ├── streams.sql                    # CDC streams for incremental load
-│   ├── tasks.sql                      # Scheduled transformation tasks
-│   └── views.sql                      # Reporting and aggregation views
-│
-├── 6_ai_and_analytics/                # Phase 15: AI/ML Layer
-│   ├── ml_tables.sql                  # Forecast and anomaly output tables
-│   ├── cortex_ml.sql                  # Cortex ML model training/inference
-│   ├── semantic_model.yaml            # Cortex Analyst semantic model
-│   └── ml_tasks.sql                   # Scheduled ML refresh tasks
-│
-└── 7_testing/                         # Phase 14: Verification
-    ├── row_count_validation.sql       # Layer-to-layer count checks
-    ├── data_quality_checks.sql        # NULL, range, and type validation
-    └── freshness_checks.sql           # Data latency monitoring
+|
++-- PROJECT_PLAN.md                  # This document
++-- Database_design.md               # Schema specifications
+|
++-- 1_infra/
+|   +-- warehouses.sql               # Warehouse definitions (SYSADMIN)
+|   +-- netpolicies.sql              # Network policies (ACCOUNTADMIN)
+|   +-- rbac.sql                     # Role hierarchy (SECURITYADMIN)
+|
++-- 2_medallion/
+|   +-- medallion_architecture.sql   # All layer definitions (SYSADMIN)
+|
++-- 4_governance/
+|   +-- tags.sql                     # Tag definitions and assignments
+|   +-- masking.sql                  # Masking policy definitions
+|   +-- row_access_pol.sql           # Row access policy
+|   +-- governance_process.md        # Design rationale documentation
+|
++-- 5_monitoring/
+|   +-- monitors.sql                 # Resource monitor definitions
+|   +-- consumption_views.sql        # ACCOUNT_USAGE views
+|   +-- system_alerts.sql            # Alert definitions
+|
++-- 7_testing/
+    +-- synthetic_pipeline_test.sql  # Pipeline validation
+    +-- Consumption_views_test.sql   # View validation
+    +-- governance_policies_test.sql # Governance validation
+    +-- rbac_access_test.sql         # RBAC validation
+    +-- resource_monitors_test.sql   # Monitor validation
 ```
 
-### File Naming Conventions
+### Execution Context by File
 
-| Pattern | Purpose | Example |
-|---------|---------|---------|
-| `*.sql` | Executable DDL/DML scripts | `warehouses.sql` |
-| `*.yaml` | Semantic model definitions | `semantic_model.yaml` |
-| `*_test.sql` | Test/validation scripts | `row_count_test.sql` |
+Each SQL file includes role and warehouse context at the header:
 
-### Execution Order
-
-Scripts should be executed in numerical folder order (1_ → 2_ → 3_ → ...) and alphabetically within each folder unless dependencies require otherwise.
-
----
-
-## Success Criteria
-
-| Metric | Target |
-|--------|--------|
-| Data Freshness | < 5 minutes from S3 landing to RAW |
-| Transform Latency | < 15 minutes from RAW to ANALYTICS |
-| Forecast Accuracy | MAPE < 15% on 24-hour predictions |
-| Query Performance | P95 < 5 seconds for dashboard queries |
-| Cost Control | < 100 credits/day during development |
-| Data Quality | > 99.5% row-level completeness |
-| Zero Data Loss | RAW count = ANALYTICS count (validated) |
+| Directory | Role | Warehouse |
+|-----------|------|-----------|
+| 1_infra/rbac.sql | SECURITYADMIN | COMPUTE_WH |
+| 1_infra/warehouses.sql | SYSADMIN | N/A |
+| 1_infra/netpolicies.sql | ACCOUNTADMIN | COMPUTE_WH |
+| 4_governance/*.sql | ACCOUNTADMIN | COMPUTE_WH |
+| 5_monitoring/monitors.sql | ACCOUNTADMIN | N/A |
+| 5_monitoring/consumption_views.sql | ACCOUNTADMIN | COMPUTE_WH |
+| 5_monitoring/system_alerts.sql | ACCOUNTADMIN | TRANSFORM_WH |
 
 ---
 
-## Contacts & Ownership
+## Testing Framework
 
-| Role | Responsibility |
-|------|----------------|
-| Data Platform Lead | Architecture, infrastructure, FinOps |
-| Data Engineer | Ingestion, transformation, testing |
-| Analytics Engineer | Gold layer, semantic models, Cortex |
-| Security Admin | RBAC, masking, row access policies |
+### Test Coverage
 
----
+Five test scripts validate all implemented components:
 
-## Implementation Notes & Fixes
+| Test Script | Validates |
+|-------------|-----------|
+| governance_policies_test.sql | Tags, masking policies, RAP, test users |
+| rbac_access_test.sql | Role hierarchy, grants, warehouse access |
+| resource_monitors_test.sql | Monitors, quotas, alerts, budget tracking |
+| synthetic_pipeline_test.sql | Data flow through medallion layers |
+| Consumption_views_test.sql | All 10 consumption insight views |
 
-### Consumption Views - Column Name Errors (2026-02-26)
+### Test Output Format
 
-During creation of 10 consumption insight views in `HELIOS_ANALYTICS_DB.PUBLIC`, three views failed due to incorrect column references against `SNOWFLAKE.ACCOUNT_USAGE` views.
-
-#### Errors Encountered
-
-| View | Error | Cause |
-|------|-------|-------|
-| `V_TOP_QUERIES_BY_COST` | `invalid identifier 'QUERY_TEXT'` | `QUERY_ATTRIBUTION_HISTORY` does not have `QUERY_TEXT` column |
-| `V_RESOURCE_MONITOR_STATUS` | `invalid identifier 'FREQUENCY'` | `RESOURCE_MONITORS` view uses different column names than `SHOW RESOURCE MONITORS` output |
-| `V_COST_ANOMALIES` | `invalid identifier 'MEASUREMENT_DATE'` | `ANOMALIES_DAILY` uses `DATE` not `MEASUREMENT_DATE` |
-
-#### Fixes Applied
-
-**V_TOP_QUERIES_BY_COST**: Removed `QUERY_TEXT`, used `QUERY_PARAMETERIZED_HASH` instead for query identification.
+Tests return consistent result format:
 
 ```sql
--- Before (failed)
-SELECT QUERY_ID, LEFT(QUERY_TEXT, 200) AS QUERY_PREVIEW, ...
-
--- After (fixed)
-SELECT QUERY_ID, QUERY_PARAMETERIZED_HASH, ...
+SELECT 
+    'TEST_NAME' AS TEST_NAME,
+    CASE WHEN <condition> THEN 'PASS' ELSE 'FAIL' END AS RESULT,
+    '<details>' AS DETAILS;
 ```
 
-**V_RESOURCE_MONITOR_STATUS**: Used correct columns from `ACCOUNT_USAGE.RESOURCE_MONITORS` view schema.
+### Running Tests
 
-```sql
--- Before (failed)
-SELECT NAME, FREQUENCY, START_TIME, END_TIME, ...
-
--- After (fixed)
-SELECT NAME AS MONITOR_NAME, NOTIFY AS NOTIFY_THRESHOLD, 
-       SUSPEND AS SUSPEND_THRESHOLD, WAREHOUSES, CREATED, ...
-```
-
-**V_COST_ANOMALIES**: Used correct column names from `ANOMALIES_DAILY` schema.
-
-```sql
--- Before (failed)
-SELECT MEASUREMENT_DATE, CREDITS_USED_COMPUTE, CREDITS_PREDICTED, COMPOSITE_SCORE, ...
-
--- After (fixed)
-SELECT DATE AS ANOMALY_DATE, ACTUAL_VALUE, FORECASTED_VALUE, UPPER_BOUND, LOWER_BOUND, ...
-```
-
-#### Lesson Learned
-
-Always run `DESCRIBE VIEW SNOWFLAKE.ACCOUNT_USAGE.<view_name>` before referencing columns in `ACCOUNT_USAGE` views. Column names differ between:
-- `SHOW` command output
-- `ACCOUNT_USAGE` view schema
-- Documentation examples
+Execute each test file individually. Tests query ACCOUNT_USAGE views which have inherent latency (1-3 seconds per query). Avoid combining tests with UNION ALL as latency compounds.
 
 ---
 
-*Document Version: 1.1*  
-*Last Updated: 2026-02-26*  
+## Technical Constraints and Design Decisions
+
+### Masking Policy and IS_ROLE_IN_SESSION
+
+The `IS_ROLE_IN_SESSION()` function checks the entire role hierarchy of the current session, not just the active role. Consequence: users with ACCOUNTADMIN granted (even if not active) will see unmasked data regardless of their current role.
+
+Mitigation: Test users (HELIOS_TEST_BI_USER, HELIOS_TEST_ANALYST_USER) have only their designated roles, enabling accurate masking validation.
+
+### Masking and Row Access Policy Conflict
+
+Snowflake prohibits using a masked column as a row access policy argument. The error `Column cannot be used as policy argument because it is masked by another policy` prevents entity-based RAP on household_id.
+
+Resolution: RAP uses reading_timestamp instead, implementing time-based filtering rather than entity-based filtering.
+
+### ACCOUNT_USAGE View Latency
+
+ACCOUNT_USAGE views have up to 45-minute data latency. Tags may not appear in TAG_REFERENCES immediately after creation.
+
+Workaround: Use `SYSTEM$GET_TAG()` for real-time tag verification:
+
+```sql
+SELECT SYSTEM$GET_TAG('HELIOS_GOVERNANCE_DB.POLICIES.PII_LEVEL', 
+    'HELIOS_ANALYTICS_DB.GRID.DIM_HOUSEHOLD.HOUSEHOLD_ID', 'COLUMN');
+```
+
+### ACCOUNT_USAGE Column Name Discrepancies
+
+Column names in ACCOUNT_USAGE views differ from SHOW command output and documentation examples. Always execute `DESCRIBE VIEW SNOWFLAKE.ACCOUNT_USAGE.<view_name>` before building queries.
+
+Example discrepancy:
+- SHOW RESOURCE MONITORS returns: `frequency`
+- RESOURCE_MONITORS view contains: No `frequency` column (use CREATED instead)
+
+---
+
+## Appendix: Object Inventory
+
+### Databases
+
+| Database | Purpose | Tables | Views |
+|----------|---------|--------|-------|
+| HELIOS_RAW_DB | Bronze layer | 3 | 0 |
+| HELIOS_TRANSFORM_DB | Silver layer | 3 | 0 |
+| HELIOS_ANALYTICS_DB | Gold layer + monitoring | 3 | 11 |
+| HELIOS_AI_READY_DB | Platinum layer | 1 | 1 |
+| HELIOS_GOVERNANCE_DB | Governance objects | 2 | 1 |
+
+### Roles
+
+| Role | Type | Granted To |
+|------|------|------------|
+| HELIOS_DATA_STEWARD | Custom | ADIWORKSATARIS |
+| HELIOS_ANALYST | Custom | ADIWORKSATARIS, HELIOS_TEST_ANALYST_USER |
+| HELIOS_BI_CONSUMER | Custom | ADIWORKSATARIS, HELIOS_TEST_BI_USER |
+| HELIOS_DATA_ENGINEER | Custom | (hierarchy) |
+| HELIOS_DATA_ANALYST | Custom | (hierarchy) |
+| HELIOS_SYSADMIN | Custom | SYSADMIN |
+| HELIOS_SECURITYADMIN | Custom | SECURITYADMIN |
+
+### Resource Monitors
+
+| Monitor | Quota | Assigned To |
+|---------|-------|-------------|
+| HELIOS_ACCOUNT_MONITOR | 200 | Account |
+| INGEST_WH_MONITOR | 30 | INGEST_WH |
+| TRANSFORM_WH_MONITOR | 50 | TRANSFORM_WH |
+| REPORTING_WH_MONITOR | 30 | REPORTING_WH |
+| CORTEX_WH_MONITOR | 60 | CORTEX_WH |
+
+---
+
+*Document Version: 2.1*
+*Last Updated: 2026-02-27*
 *Project Codename: HELIOS*
